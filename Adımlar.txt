@@ -1,0 +1,17 @@
+1 - Firebase Oluştur. 
+2 - database,function,storage,host vs. hepsini aktif hale getir.
+3 - firebase login yap
+4 - firebase init functions
+5 - typeScript
+5 - npm install -g firebase-tools
+6 - cd functions
+7 - npm i @google-cloud/storage
+8 - npm i sharp
+9 - npm i fs-extra
+firebase deploy --only functions
+
+https://androidexample.com/Open_File_Chooser_With_Camera_Option_In_Webview_File_Option/index.php?view=article_discription&aid=128
+
+https://cloud.google.com/java/?hl=tr
+
+https://cloud.google.com/vision/docs/object-localizer?apix_params=%7B%22resource%22%3A%7B%22requests%22%3A%5B%7B%22features%22%3A%5B%7B%22maxResults%22%3A10%2C%22type%22%3A%22OBJECT_LOCALIZATION%22%7D%5D%2C%22image%22%3A%7B%22source%22%3A%7B%22imageUri%22%3A%22https%3A%2F%2Fcloud.google.com%2Fvision%2Fdocs%2Fimages%2Fbicycle_example.png%22%7D%7D%7D%5D%7D%7D#vision_localize_objects-java

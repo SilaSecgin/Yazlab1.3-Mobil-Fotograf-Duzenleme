@@ -1,0 +1,678 @@
+///// Android node js cloud function ////
+
+import * as functions from 'firebase-functions';
+
+import {Storage} from '@google-cloud/storage';
+const gcs = new Storage();
+
+import { tmpdir } from 'os';
+import { join, dirname } from 'path';
+
+import * as sharp from 'sharp';
+import * as fs from 'fs-extra';
+
+export const generateThumbs = functions.storage.object().onFinalize(async object => {
+
+    const bucket = gcs.bucket(object.bucket);
+    const filePath = ''+object.name;
+    
+    const fileName = ''+filePath.split('/').pop();
+    const bucketDir = dirname(filePath);
+    
+    const workingDir = join(tmpdir(), 'thumbs');
+    const tmpFilePath = join(workingDir, 'source.png');
+
+    if (fileName.includes('thumb@')) {
+      console.log('exiting function');
+      return false;
+    }
+
+    // 1. Ensure thumbnail dir exists
+    await fs.ensureDir(workingDir);
+
+    // 2. Download Source File
+    await bucket.file(filePath).download({
+      destination: tmpFilePath
+    });
+
+    // 3. Resize the images and define an array of upload promises
+    const sizes = [512,1024];
+
+    const uploadPromises = sizes.map(async size => {
+      const thumbName = `thumb@${size}_${fileName}`;
+      const thumbPath = join(workingDir, thumbName);
+
+      // Resize source image
+      await sharp(tmpFilePath)
+        .resize(size, size)
+        .toFile(thumbPath);
+
+      // Upload to GCS
+      return bucket.upload(thumbPath, {
+        destination: join(bucketDir, thumbName)
+      });
+    });
+
+    // 4. Run the upload operations
+    await Promise.all(uploadPromises);
+
+    // 5. Cleanup remove the tmp/thumbs from the filesystem
+    return fs.remove(workingDir);
+  });
+
+
+/// ANDROİD MANİFEST /// 
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.sila.javalast">
+
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
+
+//// ANDROİD ACTİVİTY XML ///
+
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
+
+    <WebView
+        android:id="@+id/webView1"
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent"
+        tools:ignore="MissingConstraints" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+/// ANDROİD MAİNACTİVİTY.JAVA /// 
+
+package com.sila.javalast;
+
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+
+import android.annotation.TargetApi;
+import android.app.ProgressDialog;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Toast;
+
+public class MainActivity extends AppCompatActivity {
+
+    private WebView webView;
+    private CustomWebViewClient webViewClient;
+    private String Url = "http://10.0.2.2:8080/YazLab1Proje3_RestWebService/";
+    ProgressDialog mProgressDialog;
+    private String mCurrentPhotoPath;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        mProgressDialog = new ProgressDialog(this);//ProgressDialog objesi oluşturuyoruz
+        mProgressDialog.setMessage("Yükleniyor...");//ProgressDialog Yükleniyor yazısı
+
+        webViewClient = new CustomWebViewClient();//CustomWebViewClient classdan webViewClient objesi oluşturuyoruz
+
+        webView = (WebView) findViewById(R.id.webView1);//webview mızı xml anasayfa.xml deki webview bağlıyoruz
+        webView.getSettings().setBuiltInZoomControls(true); //zoom yapılmasına izin verir
+        webView.getSettings().setSupportZoom(true);
+        webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(true);
+        webView.getSettings().setAllowFileAccess(true);
+        webView.getSettings().setDomStorageEnabled(true);
+        webView.getSettings().setAllowContentAccess(true);
+        webView.getSettings().setDomStorageEnabled(true);
+        webView.setWebChromeClient(new MyWebChromeClient());
+        webView.getSettings().setJavaScriptEnabled(true);
+        webView.setWebViewClient(webViewClient); //oluşturduğumuz webViewClient objesini webViewımıza set ediyoruz
+        webView.loadUrl(Url);
+
+    }
+
+    private void selectImage(Context context) {
+        final CharSequence[] options = { "Kamera", "Galeriden Seç","İptal" };
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setTitle("Fotoğraf Seçin");
+        builder.setItems(options, new DialogInterface.OnClickListener() {
+
+            @Override
+            public void onClick(DialogInterface dialog, int item) {
+
+                if (options[item].equals("Kamera")) {
+
+                    Intent takePicture = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
+
+                    startActivityForResult(takePicture, REQUEST_SELECT_FILE);
+
+
+                } else if (options[item].equals("Galeriden Seç")) {
+                    Intent pickPhoto = new Intent(
+                            Intent.ACTION_PICK,
+                            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+                    startActivityForResult(pickPhoto , REQUEST_SELECT_FILE);
+
+                } else if (options[item].equals("İptal")) {
+                    dialog.dismiss();
+                }
+            }
+        });
+        builder.show();
+    }
+
+
+    class MyWebChromeClient extends WebChromeClient {
+
+        // For Lollipop 5.0+ Devices
+        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+        public boolean onShowFileChooser(WebView mWebView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+            if (uploadMessage != null) {
+                uploadMessage.onReceiveValue(null);
+                uploadMessage = null;
+            }
+
+            uploadMessage = filePathCallback;
+            selectImage(MainActivity.this);
+
+           /* Intent intent = fileChooserParams.createIntent();
+            try {
+                startActivityForResult(intent, REQUEST_SELECT_FILE);
+            } catch (ActivityNotFoundException e) {
+                uploadMessage = null;
+                Toast.makeText(MainActivity.this, "Cannot Open File Chooser", Toast.LENGTH_LONG).show();
+                return false;
+            }*/
+            return true;
+        }
+
+
+        protected void openFileChooser(ValueCallback<Uri> uploadMsg) {
+            mUploadMessage = uploadMsg;
+            Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("image/*");
+            startActivityForResult(Intent.createChooser(i, "File Chooser"), FILECHOOSER_RESULTCODE);
+        }
+    }
+
+
+
+    public ValueCallback<Uri[]> uploadMessage;
+    private ValueCallback<Uri> mUploadMessage;
+    public static final int REQUEST_SELECT_FILE = 100;
+    private final static int FILECHOOSER_RESULTCODE = 1;
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent intent) {
+        super.onActivityResult(requestCode, resultCode, intent);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            if (requestCode == REQUEST_SELECT_FILE) {
+                if (uploadMessage == null)
+                    return;
+                uploadMessage.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, intent));
+                uploadMessage = null;
+
+            }
+            /*else if (requestCode == 0){
+                Toast.makeText(this, "sa", Toast.LENGTH_SHORT).show();
+
+
+
+            }*/
+        } else if (requestCode == FILECHOOSER_RESULTCODE) {
+            if (null == mUploadMessage)
+                return;
+            // Use MainActivity.RESULT_OK if you're implementing WebView inside Fragment
+            // Use RESULT_OK only if you're implementing WebView inside an Activity
+            Uri result = intent == null || resultCode != MainActivity.RESULT_OK ? null : intent.getData();
+            mUploadMessage.onReceiveValue(result);
+            mUploadMessage = null;
+
+        } else
+            Toast.makeText(MainActivity.this, "Failed to Upload Image", Toast.LENGTH_LONG).show();
+    }
+
+    private class CustomWebViewClient extends WebViewClient {
+        //Alttaki methodların hepsini kullanmak zorunda deilsiniz
+        //Hangisi işinize yarıyorsa onu kullanabilirsiniz.
+        @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) { //Sayfa yüklenirken çalışır
+            super.onPageStarted(view, url, favicon);
+
+            if(!mProgressDialog.isShowing())//mProgressDialog açık mı kontrol ediliyor
+            {
+                mProgressDialog.show();//mProgressDialog açık değilse açılıyor yani gösteriliyor ve yükleniyor yazısı çıkıyor
+            }
+
+        }
+
+        @Override
+        public void onPageFinished(WebView view, String url) {//sayfamız yüklendiğinde çalışıyor.
+            super.onPageFinished(view, url);
+
+            if(mProgressDialog.isShowing()){//mProgressDialog açık mı kontrol
+                mProgressDialog.dismiss();//mProgressDialog açıksa kapatılıyor
+            }
+        }
+
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            // Bu method açılan sayfa içinden başka linklere tıklandığında açılmasına yarıyor.
+            //Bu methodu override etmez yada edip içini boş bırakırsanız ilk url den açılan sayfa dışında başka sayfaya geçiş yapamaz
+
+            view.loadUrl(url);//yeni tıklanan url i açıyor
+            return true;
+        }
+
+    }
+    public void onBackPressed() //Android Back Buttonunu Handle ettik. Back butonu bir önceki sayfaya geri dönecek
+    {
+        if(webView.canGoBack()){//eğer varsa bir önceki sayfaya gidecek
+            webView.goBack();
+        }else{//Sayfa yoksa uygulamadan çıkacak
+            super.onBackPressed();
+        }
+    }
+
+
+
+}
+
+/// ANDROİD BUİLD APP //
+
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 29
+    buildToolsVersion "29.0.2"
+    defaultConfig {
+        applicationId "com.sila.javalast"
+        minSdkVersion 19
+        targetSdkVersion 29
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'androidx.appcompat:appcompat:1.1.0'
+    implementation 'androidx.constraintlayout:constraintlayout:1.1.3'
+    testImplementation 'junit:junit:4.12'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.1'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.2.0'
+}
+
+
+///// JAVA IMAGE SERVİCE CODE ///// 
+
+package Service;
+
+import java.awt.image.BufferedImage;
+import java.awt.image.RenderedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.util.Iterator;
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.FileImageOutputStream;
+import javax.imageio.stream.ImageOutputStream;
+import javax.swing.JFrame;
+
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+
+import javax.ws.rs.Consumes;
+import javax.ws.rs.FormParam;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.ResponseBuilder;
+
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.content.InputStreamBody;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.util.EntityUtils;
+
+import com.sun.jersey.core.header.FormDataContentDisposition;
+import com.sun.jersey.multipart.FormDataParam;
+import com.sun.jersey.spi.container.ParamQualifier;
+
+@Path("/image")
+public class ImageService {
+	
+	@POST
+	@Path("/segmentation")
+	@Consumes(MediaType.MULTIPART_FORM_DATA)
+	public Response segmentation(@FormDataParam("file") InputStream uploadedInputStream,
+			@FormDataParam("file") FormDataContentDisposition fileDetail) throws ClientProtocolException, IOException {
+		
+		System.out.println(fileDetail.getFileName());
+		String uploadedFileLocation = "C:\\Users\\silas\\Documents\\EclipseWorkspace\\Images\\" + fileDetail.getFileName();
+		// save it
+		writeToFile(uploadedInputStream, uploadedFileLocation);
+		// String output = "File uploaded to : " + uploadedFileLocation;
+
+		File inFile = new File("C:\\Users\\silas\\Documents\\EclipseWorkspace\\Images\\" + fileDetail.getFileName());
+		FileInputStream fis = null;
+
+		fis = new FileInputStream(inFile);
+		DefaultHttpClient httpclient = new DefaultHttpClient(new BasicHttpParams());
+
+		// server back-end URL
+		HttpPost httppost = new HttpPost("https://still-crag-64816.herokuapp.com/");
+		MultipartEntity entity = new MultipartEntity();
+		// set the file input stream and file name as arguments
+		entity.addPart("file", new InputStreamBody(fis, inFile.getName()));
+		httppost.setEntity(entity);
+		// execute the request
+		HttpResponse Httpdonus = httpclient.execute(httppost);
+
+		int statusCode = Httpdonus.getStatusLine().getStatusCode();
+		HttpEntity responseEntity = Httpdonus.getEntity();
+		String responseString = EntityUtils.toString(responseEntity, "UTF-8");
+		System.out.println(responseString);
+		
+		int baslangic = responseString.indexOf("<ul>");
+		int bitis  = responseString.indexOf("</ul>");
+		String hayvan = responseString.substring(baslangic, bitis);
+		return Response.status(200).entity(hayvan).build();
+		// System.out.println("[" + statusCode + "] " + responseString);
+
+	}
+
+	private void writeToFile(InputStream uploadedInputStream, String uploadedFileLocation) {
+		try {
+			OutputStream out = new FileOutputStream(new File(uploadedFileLocation));
+			int oku = 0;
+			byte[] bytes = new byte[1024];
+			out = new FileOutputStream(new File(uploadedFileLocation));
+			while ((oku = uploadedInputStream.read(bytes)) != -1) {
+				out.write(bytes, 0, oku);
+			}
+			out.flush();
+			out.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	public static void compressAndShow(BufferedImage image, float quality) throws IOException {
+		// Jpeg formatı için bir imagewriter
+		Iterator<ImageWriter> writers = ImageIO.getImageWritersBySuffix("jpg");
+		if (!writers.hasNext())
+			throw new IllegalStateException("No writers found");
+		ImageWriter writer = (ImageWriter) writers.next();
+		// Sıkıştırılan resim için bir ImageParam
+		ImageWriteParam param = writer.getDefaultWriteParam();
+		param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+		param.setCompressionQuality(quality);
+
+		ByteArrayOutputStream bos = new ByteArrayOutputStream(32768);
+		ImageOutputStream ios = ImageIO.createImageOutputStream(bos);
+		writer.setOutput(ios);
+		writer.write(null, new IIOImage(image, null, null), param);
+		ios.flush();
+			
+		// SIkıştırdığımız yeni resim dosyamızı uygulamamızın çalıştığı dizine
+		// kaydediyor
+		File dosya = new File("C:\\Users\\silas\\Documents\\EclipseWorkspace\\Images\\" + "compress." + quality + ".jpg");
+		FileImageOutputStream cikti = new FileImageOutputStream(dosya);
+		writer.setOutput(cikti);
+		writer.write(null, new IIOImage(image, null, null), param);
+	}
+	
+	@POST
+	@Path("/compression")
+	@Consumes(MediaType.MULTIPART_FORM_DATA)
+	@Produces("image/jpg")
+	public Response compression(
+			@FormDataParam("quality") float quality,
+			@FormDataParam("file") InputStream uploadedInputStream,
+			@FormDataParam("file") FormDataContentDisposition fileDetail) throws IOException {
+		
+		String yuklenenKonum = "C:\\Users\\silas\\Documents\\EclipseWorkspace\\Images\\" + fileDetail.getFileName();
+		writeToFile(uploadedInputStream, yuklenenKonum);
+		File dosya = new File("C:\\Users\\silas\\Documents\\EclipseWorkspace\\Images\\" + fileDetail.getFileName());
+		/***** sıkıstırma *////
+		BufferedImage foto = ImageIO.read(dosya);
+		compressAndShow(foto, quality);
+			
+		File dosya2 = new File("C:\\Users\\silas\\Documents\\EclipseWorkspace\\Images\\" + "compress." + quality + ".jpg");
+		ResponseBuilder donus = Response.ok((Object) dosya2);
+		donus.header("Content-Disposition", "attachment; filename=image_from_server.jpg");
+		return donus.build();
+	}
+
+}
+
+////  POM XML /// 
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>YazLab1Proje3_RestWebService</groupId>
+	<artifactId>YazLab1Proje3_RestWebService</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>war</packaging>
+	<build>
+		<sourceDirectory>src</sourceDirectory>
+		<plugins>
+			<plugin>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.8.0</version>
+				<configuration>
+					<source>1.8</source>
+					<target>1.8</target>
+				</configuration>
+			</plugin>
+			<plugin>
+				<artifactId>maven-war-plugin</artifactId>
+				<version>3.2.1</version>
+				<configuration>
+					<warSourceDirectory>WebContent</warSourceDirectory>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+	<repositories>
+		<repository>
+			<id>maven2-repository.java.net</id>
+			<name>Java.net Repository for Maven</name>
+			<url>http://download.java.net/maven/2/</url>
+			<layout>default</layout>
+		</repository>
+	</repositories>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.sun.jersey</groupId>
+			<artifactId>jersey-server</artifactId>
+			<version>1.8</version>
+		</dependency>
+		<dependency>
+			<groupId>com.sun.jersey.contribs</groupId>
+			<artifactId>jersey-multipart</artifactId>
+			<version>1.8</version>
+		</dependency>
+		<!-- https://mvnrepository.com/artifact/org.apache.httpcomponents/httpclient -->
+		<dependency>
+			<groupId>org.apache.httpcomponents</groupId>
+			<artifactId>httpclient</artifactId>
+			<version>4.5</version>
+		</dependency>
+		<!-- https://mvnrepository.com/artifact/org.wso2.apache.httpcomponents/httpmime -->
+		<dependency>
+			<groupId>org.wso2.apache.httpcomponents</groupId>
+			<artifactId>httpmime</artifactId>
+			<version>4.3.1.wso2v1</version>
+		</dependency>
+
+
+
+	</dependencies>
+</project>
+
+///// COMPRESSİON HTML //// 
+
+<html>
+<body>
+<div>
+	<h1>Görüntü Sıkıştırma</h1>
+
+	<form action="Service/image/compression" method="post" enctype="multipart/form-data">
+		
+		<p>0.1 - 1 Arasında Bir Değer Giriniz. </p>
+		<p>
+			Görüntü Kalitesi : <input type="text" name="quality" />
+		</p>
+		<p>
+			Bir Dosya Seçin : <input type="file" name="file" size="45" />
+	    </p>
+ 
+	    <input type="submit" value="Yükle" />
+	</form>
+	<a href = "index.html">Geri Git</a>
+	</div>
+</body>
+</html>
+
+//// İNDEX HTML /// 
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>İndex</title>
+</head>
+
+<style type="text/css">
+.kolon { float:left; border:1px solid red; padding:10px; margin:10px; }
+.center {float:center; padding-left: 100px;}
+</style>
+
+<body>
+
+<div class="center">
+İşlemi Seçiniz..
+</div>
+
+
+<div class="kolon">
+<a href = "Compression.html"> Compression</a>
+</div>
+<div class="kolon">
+<a href = "Segmentation.html"> Segmentation</a>
+</div>
+<div style='clear: both'/>
+
+</body>
+</html>
+
+////// SEGMENTATİON //// 
+
+<html>
+<body>
+	<h1>Segmentasyon</h1>
+ 
+	<form action="Service/image/segmentation" method="post" enctype="multipart/form-data">
+ 
+	   <p>
+		Bir Dosya Seçin : <input type="file" name="file" size="45" />
+	   </p>
+ 
+	   <input type="submit" value="Yükle" />
+	</form>
+ 	<a href = "index.html">Geri Git</a>
+</body>
+</html>
+
+
+////WEB XML //// 
+
+<web-app id="WebApp_ID" version="2.4"
+	xmlns="http://java.sun.com/xml/ns/j2ee" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://java.sun.com/xml/ns/j2ee 
+	http://java.sun.com/xml/ns/j2ee/web-app_2_4.xsd">
+	<display-name>Restful Web Application</display-name>
+
+	<servlet>
+		<servlet-name>jersey-serlvet</servlet-name>
+		<servlet-class>
+                     com.sun.jersey.spi.container.servlet.ServletContainer
+                </servlet-class>
+		<init-param>
+		     <param-name>com.sun.jersey.config.property.packages</param-name>
+		     <param-value>Service</param-value>
+		</init-param>
+		<load-on-startup>1</load-on-startup>
+	</servlet>
+
+	<servlet-mapping>
+		<servlet-name>jersey-serlvet</servlet-name>
+		<url-pattern>/Service/*</url-pattern>
+	</servlet-mapping>
+
+</web-app>
+
